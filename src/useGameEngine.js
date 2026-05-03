@@ -888,12 +888,16 @@ export function useGameEngine() {
         }
       }
 
-      // Trees (only near)
-      if (detailed && sg.tree && p1.scale > 0.001) {
-        const tx = p1.screen.x + sg.treeSide * p1.screen.w * sg.treeOff;
-        const ty = p1.screen.y;
-        const ts = p1.scale * 1500;
-        if (ts > 0.5) {
+      // Trees — anchor at segment midpoint so close segs don't go off-screen
+      if (detailed && sg.tree) {
+        const midScale = (p1.scale + p2.scale) / 2;
+        const midX = (p1.screen.x + p2.screen.x) / 2;
+        const midY = (p1.screen.y + p2.screen.y) / 2;
+        const midW = (p1.screen.w + p2.screen.w) / 2;
+        const tx = midX + sg.treeSide * midW * sg.treeOff;
+        const ty = Math.min(midY, H - 10);
+        const ts = midScale * 28000;
+        if (ts > 1.5) {
           ctx.fillStyle = COL.TREE_TRUNK;
           ctx.fillRect(tx - ts * 0.08, ty - ts * 0.6, ts * 0.16, ts * 0.6);
           ctx.fillStyle = COL.TREE_TOP;
@@ -908,54 +912,61 @@ export function useGameEngine() {
         }
       }
 
-      // Coins
+      // Coins — anchor at midpoint
       for (const coin of sg.coins) {
         if (coin.collected) continue;
-        if (p1.scale > 0.001) {
-          const ox = p1.screen.x + (coin.x * p1.scale * W) / 2;
-          const oy = p1.screen.y;
-          drawCoin(ctx, ox, oy, p1.scale, s.gameTime);
+        const midScale = (p1.scale + p2.scale) / 2;
+        if (midScale > 0) {
+          const midX = (p1.screen.x + p2.screen.x) / 2;
+          const midY = (p1.screen.y + p2.screen.y) / 2;
+          const ox = midX + (coin.x * midScale * W) / 2;
+          const oy = Math.min(midY, H - 5);
+          drawCoin(ctx, ox, oy, midScale, s.gameTime);
         }
       }
 
       // Traffic cars in this segment
       const carsHere = trafficByN[n];
-      if (carsHere && p1.scale > 0.001) {
+      if (carsHere) {
         const segLoZ = n * SEG_LEN - (s.pos % SEG_LEN);
         for (const { c, rel } of carsHere) {
           const t = Math.max(0, Math.min(1, (rel - segLoZ) / SEG_LEN));
           const sx = p1.screen.x + (p2.screen.x - p1.screen.x) * t;
           const sy = p1.screen.y + (p2.screen.y - p1.screen.y) * t;
           const scale = p1.scale + (p2.scale - p1.scale) * t;
+          if (scale <= 0) continue;
           const ox = sx + (c.x * scale * W) / 2;
-          const cw = scale * 800;
-          const ch = scale * 600;
-          if (cw > 0.5) {
+          const oyClamp = Math.min(sy, H - 10);
+          const cw = scale * 9000;
+          const ch = scale * 7000;
+          if (cw > 2) {
             const col = COL.CARS[c.ci];
-            drawCar(ctx, ox, sy, cw, ch, col.b, col.a, '#1a1a3a');
+            drawCar(ctx, ox, oyClamp, cw, ch, col.b, col.a, '#1a1a3a');
           }
         }
       }
 
-      // Obstacles
+      // Obstacles — anchor at midpoint, generous scale multiplier
       for (const o of sg.obstacles) {
         if (o.passed && (o.type === OBS_CONE || o.type === OBS_OIL)) continue;
-        if (p1.scale > 0.001) {
-          const ox = p1.screen.x + (o.x * p1.scale * W) / 2;
-          const oy = p1.screen.y;
-          const cw = p1.scale * 800;
-          const ch = p1.scale * 600;
-          if (cw > 0.5) {
-            if (o.type === OBS_CAR) {
-              const c = COL.CARS[o.ci];
-              drawCar(ctx, ox, oy, cw, ch, c.b, c.a, '#1a1a3a');
-            } else if (o.type === OBS_BARREL) {
-              drawBarrel(ctx, ox, oy, cw, ch);
-            } else if (o.type === OBS_CONE) {
-              drawCone(ctx, ox, oy, cw * 0.5, ch * 0.5);
-            } else if (o.type === OBS_OIL) {
-              drawOilSlick(ctx, ox, oy, cw * 1.5, ch);
-            }
+        const midScale = (p1.scale + p2.scale) / 2;
+        if (midScale <= 0) continue;
+        const midX = (p1.screen.x + p2.screen.x) / 2;
+        const midY = (p1.screen.y + p2.screen.y) / 2;
+        const ox = midX + (o.x * midScale * W) / 2;
+        const oy = Math.min(midY, H - 10);
+        const cw = midScale * 9000;
+        const ch = midScale * 7000;
+        if (cw > 2) {
+          if (o.type === OBS_CAR) {
+            const c = COL.CARS[o.ci];
+            drawCar(ctx, ox, oy, cw, ch, c.b, c.a, '#1a1a3a');
+          } else if (o.type === OBS_BARREL) {
+            drawBarrel(ctx, ox, oy, cw, ch);
+          } else if (o.type === OBS_CONE) {
+            drawCone(ctx, ox, oy, cw * 0.55, ch * 0.55);
+          } else if (o.type === OBS_OIL) {
+            drawOilSlick(ctx, ox, oy, cw * 1.4, ch);
           }
         }
       }
