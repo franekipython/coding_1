@@ -120,10 +120,11 @@ function App() {
               Na telefonie: dotknij lewą/prawą stronę ekranu
             </p>
             <div className="legend">
-              <p>🚗 Samochody & 🛢️ Beczki = koniec gry</p>
+              <p>🚗 Inne auta & 🛢️ Beczki = kraksa (stop!)</p>
               <p>🔶 Pachołki = spowolnienie</p>
               <p>🛢️ Plamy oleju = poślizg</p>
               <p>💰 Monety = +50 punktów</p>
+              <p><kbd>SPACJA</kbd> = skok (przeskakuj przeszkody)</p>
             </div>
             <button id="start-btn" className="btn-glow" onClick={handleStart}>
               START

@@ -4,7 +4,11 @@ import { useRef, useCallback, useEffect } from 'react';
 // ===== CONSTANTS =====
 const ROAD_W = 2000;
 const SEG_LEN = 200;
-const DRAW_DIST = 120;
+const DRAW_DIST = 200;
+const DETAIL_DIST = 100;
+const JUMP_V = 22;
+const GRAVITY = 1.0;
+const NUM_TRAFFIC = 45;
 const CAM_H = 1000;
 const FOV = 100;
 const CAM_DEPTH = 1 / Math.tan(((FOV / 2) * Math.PI) / 180);
@@ -145,6 +149,33 @@ class SoundEngine {
     osc.frequency.linearRampToValueAtTime(40, this.ctx.currentTime + 0.15);
     g.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.2);
     osc.stop(this.ctx.currentTime + 0.25);
+  }
+
+  playJump() {
+    if (!this.ctx || this.muted) return;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 220;
+    g.gain.value = 0.18;
+    osc.connect(g); g.connect(this.ctx.destination);
+    osc.start();
+    osc.frequency.exponentialRampToValueAtTime(720, this.ctx.currentTime + 0.18);
+    g.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.22);
+    osc.stop(this.ctx.currentTime + 0.25);
+  }
+
+  playLand() {
+    if (!this.ctx || this.muted) return;
+    const bufSize = this.ctx.sampleRate * 0.12;
+    const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufSize * 0.2)) * 0.4;
+    const src = this.ctx.createBufferSource();
+    const g = this.ctx.createGain();
+    src.buffer = buf; g.gain.value = 0.25;
+    src.connect(g); g.connect(this.ctx.destination);
+    src.start();
   }
 
   playOil() {
@@ -346,24 +377,16 @@ function spawnObstacles(segs) {
       const lw = ROAD_W / LANES;
       const x = -ROAD_W / 2 + lw * lane + lw / 2;
 
-      // Pick obstacle type: 50% car, 20% barrel, 20% cone, 10% oil
+      // Pick obstacle type: 35% barrel, 45% cone, 20% oil (cars are now moving traffic)
       const roll = Math.random();
       let type;
-      if (roll < 0.5) type = OBS_CAR;
-      else if (roll < 0.7) type = OBS_BARREL;
-      else if (roll < 0.9) type = OBS_CONE;
+      if (roll < 0.35) type = OBS_BARREL;
+      else if (roll < 0.8) type = OBS_CONE;
       else type = OBS_OIL;
 
       const ci = Math.floor(Math.random() * COL.CARS.length);
       segs[i].obstacles.push({ x, ci, type, passed: false });
 
-      // sometimes spawn a second obstacle in adjacent lane
-      if (Math.random() < 0.25 && type === OBS_CAR) {
-        const lane2 = (lane + (Math.random() < 0.5 ? 1 : -1) + LANES) % LANES;
-        const x2 = -ROAD_W / 2 + lw * lane2 + lw / 2;
-        const ci2 = Math.floor(Math.random() * COL.CARS.length);
-        segs[i].obstacles.push({ x: x2, ci: ci2, type: OBS_CAR, passed: false });
-      }
       const progressC = i / segs.length;
       cooldown = Math.max(3, Math.floor((8 + Math.random() * 12) * (1 - progressC * 0.55)));
     }
@@ -385,6 +408,21 @@ function spawnObstacles(segs) {
       i += runLen + 5;
     }
   }
+}
+
+function spawnTraffic(tLen) {
+  const traffic = [];
+  const startGap = 4000; // empty zone in front of player at start
+  for (let i = 0; i < NUM_TRAFFIC; i++) {
+    const lane = Math.floor(Math.random() * LANES);
+    const lw = ROAD_W / LANES;
+    const x = -ROAD_W / 2 + lw * lane + lw / 2;
+    const z = startGap + (i / NUM_TRAFFIC) * (tLen - startGap - 1000) + Math.random() * 300;
+    const speed = SEG_LEN * (0.45 + Math.random() * 0.45);
+    const ci = Math.floor(Math.random() * COL.CARS.length);
+    traffic.push({ x, z, speed, ci });
+  }
+  return traffic;
 }
 
 // ===== PROJECT =====
@@ -417,7 +455,8 @@ export function useGameEngine() {
     brake: SEG_LEN * 0.01,
     offSpd: SEG_LEN * 0.004,
     px: 0, pos: 0, steer: 0,
-    segs: [], tLen: 0,
+    jumpY: 0, jumpV: 0,
+    segs: [], tLen: 0, trafficCars: [],
     keys: { l: false, r: false, u: false, d: false },
     particles: [],
     smokeTimer: 0,
@@ -434,6 +473,7 @@ export function useGameEngine() {
     s.segs = buildRoad();
     s.tLen = s.segs.length * SEG_LEN;
     spawnObstacles(s.segs);
+    s.trafficCars = spawnTraffic(s.tLen);
   }, []);
 
   const notifyState = useCallback(() => {
@@ -468,38 +508,11 @@ export function useGameEngine() {
     s.score = 0; s.coins = 0;
     s.speed = 0; s.px = 0; s.pos = 0;
     s.particles = []; s.shakeDur = 0; s.oilSlide = 0; s.gameTime = 0;
+    s.jumpY = 0; s.jumpV = 0;
     s.level = 1; s.diffMul = 1; s.maxSpd = BASE_MAX_SPD;
     initRoad();
     if (s.cb) s.cb('playing', 0, s.best, 0, 0, 1, s.muted);
   }, [initRoad]);
-
-  const endGame = useCallback(() => {
-    const s = S.current;
-    const canvas = canvasRef.current;
-    s.state = 'gameover';
-    soundRef.current.playCrash();
-    soundRef.current.stop();
-    if (s.score > s.best) {
-      s.best = s.score;
-      localStorage.setItem('trBest', String(s.best));
-    }
-    s.shakeDur = 500;
-    const W = canvas ? canvas.width : 800;
-    const H = canvas ? canvas.height : 600;
-    for (let i = 0; i < 40; i++) {
-      s.particles.push({
-        x: W / 2 + (Math.random() - 0.5) * 80,
-        y: H - 120 + (Math.random() - 0.5) * 50,
-        vx: (Math.random() - 0.5) * 10,
-        vy: -Math.random() * 8 - 2,
-        life: 1,
-        col: ['#ff3355', '#ff8800', '#ffe600', '#00f0ff', '#ff00aa'][Math.floor(Math.random() * 5)],
-        sz: 3 + Math.random() * 6,
-        type: 'explosion',
-      });
-    }
-    if (s.cb) s.cb('gameover', s.score, s.best, 0, s.coins, s.level, s.muted);
-  }, []);
 
   // ===== GAME LOOP =====
   const loop = useCallback((ts) => {
@@ -550,9 +563,56 @@ export function useGameEngine() {
         s.px = Math.max(-ROAD_W * 0.8, Math.min(ROAD_W * 0.8, s.px));
       }
 
+      // Jump physics
+      if (s.jumpV !== 0 || s.jumpY < 0) {
+        const wasInAir = s.jumpY < 0;
+        s.jumpV += GRAVITY * dt * 60;
+        s.jumpY += s.jumpV * dt * 60;
+        if (s.jumpY >= 0) {
+          s.jumpY = 0;
+          s.jumpV = 0;
+          if (wasInAir) {
+            soundRef.current.playLand();
+            for (let pi = 0; pi < 6; pi++) {
+              s.particles.push({
+                x: W / 2 + (Math.random() - 0.5) * 50,
+                y: H - 70 + (Math.random() - 0.5) * 8,
+                vx: (Math.random() - 0.5) * 5,
+                vy: -Math.random() * 2,
+                life: 0.4, col: 'rgba(120,120,140,',
+                sz: 4 + Math.random() * 3, type: 'smoke',
+              });
+            }
+          }
+        }
+      }
+
+      // Edge of road slowdown (mild) before fully off-road (heavy)
+      const ax = Math.abs(s.px);
+      if (ax > ROAD_W * 0.4 && ax <= ROAD_W / 2) {
+        const minEdgeSpd = s.maxSpd * 0.45;
+        if (s.speed > minEdgeSpd) {
+          s.speed = Math.max(s.speed - s.offSpd * 0.5 * dt * 60, minEdgeSpd);
+        }
+      }
+
       s.pos += s.speed * dt * 60;
       if (s.pos >= s.tLen) s.pos -= s.tLen;
       s.score += Math.floor(s.speed * dt * 0.1);
+      if (s.score > s.best) {
+        s.best = s.score;
+        s.bestSaveT = (s.bestSaveT || 0) + dt;
+        if (s.bestSaveT > 2) {
+          localStorage.setItem('trBest', String(s.best));
+          s.bestSaveT = 0;
+        }
+      }
+
+      // Advance traffic cars
+      for (const c of s.trafficCars) {
+        c.z += c.speed * dt * 60;
+        if (c.z >= s.tLen) c.z -= s.tLen;
+      }
 
       // Engine sound
       soundRef.current.updateEngine(sp);
@@ -582,8 +642,10 @@ export function useGameEngine() {
         const ci = (psi + k + s.segs.length) % s.segs.length;
         const cs = s.segs[ci];
 
-        // Obstacles
+        // Obstacles (skipped while in air)
+        const inAir = s.jumpY < -20;
         for (const o of cs.obstacles) {
+          if (inAir) { o.passed = true; continue; }
           const oz = cs.idx * SEG_LEN;
           const relZ = Math.abs(((s.pos - oz) + s.tLen / 2) % s.tLen - s.tLen / 2);
           const hitDist = o.type === OBS_OIL ? 400 : 350;
@@ -623,10 +685,22 @@ export function useGameEngine() {
                   });
                 }
               } else {
-                // Car or barrel = game over
-                soundRef.current.stop();
-                endGame();
-                break;
+                // Barrel = soft crash: speed drops to 0, game continues
+                o.passed = true;
+                s.speed = 0;
+                s.shakeDur = 400;
+                soundRef.current.playCrash();
+                for (let pi = 0; pi < 18; pi++) {
+                  s.particles.push({
+                    x: W / 2 + (Math.random() - 0.5) * 60,
+                    y: H - 110 + (Math.random() - 0.5) * 30,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: -Math.random() * 5 - 1,
+                    life: 0.8,
+                    col: ['#ff3355', '#ff8800', '#ffe600'][Math.floor(Math.random() * 3)],
+                    sz: 3 + Math.random() * 5, type: 'explosion',
+                  });
+                }
               }
             }
           } else if (relZ > SEG_LEN) {
@@ -658,6 +732,34 @@ export function useGameEngine() {
                 });
               }
             }
+          }
+        }
+      }
+
+      // Traffic car collision
+      if (s.jumpY > -20) {
+        for (const c of s.trafficCars) {
+          let rel = c.z - s.pos;
+          if (rel > s.tLen / 2) rel -= s.tLen;
+          if (rel < -s.tLen / 2) rel += s.tLen;
+          if (Math.abs(rel) < SEG_LEN * 0.7 && Math.abs(c.x - s.px) < 350) {
+            s.speed = 0;
+            s.shakeDur = 400;
+            soundRef.current.playCrash();
+            for (let pi = 0; pi < 22; pi++) {
+              s.particles.push({
+                x: W / 2 + (Math.random() - 0.5) * 70,
+                y: H - 110 + (Math.random() - 0.5) * 30,
+                vx: (Math.random() - 0.5) * 9,
+                vy: -Math.random() * 6 - 1,
+                life: 0.9,
+                col: ['#ff3355', '#ff8800', '#ffe600', '#ffffff'][Math.floor(Math.random() * 4)],
+                sz: 3 + Math.random() * 6, type: 'explosion',
+              });
+            }
+            // Push the crashed car forward so we don't keep colliding
+            c.z = (s.pos + SEG_LEN * 2.5) % s.tLen;
+            break;
           }
         }
       }
@@ -725,6 +827,17 @@ export function useGameEngine() {
 
     let curveX = 0, curveDx = 0, clipY = H;
     const toDraw = [];
+    const trafficByN = {};
+    for (const c of s.trafficCars) {
+      let rel = c.z - s.pos;
+      if (rel > s.tLen / 2) rel -= s.tLen;
+      if (rel < -s.tLen / 2) rel += s.tLen;
+      if (rel < -SEG_LEN || rel > DRAW_DIST * SEG_LEN) continue;
+      const nIdx = Math.floor((rel + (s.pos % SEG_LEN)) / SEG_LEN);
+      if (nIdx < 0 || nIdx >= DRAW_DIST) continue;
+      if (!trafficByN[nIdx]) trafficByN[nIdx] = [];
+      trafficByN[nIdx].push({ c, rel });
+    }
 
     for (let n = 0; n < DRAW_DIST; n++) {
       const i = (baseSeg + n) % s.segs.length;
@@ -744,12 +857,13 @@ export function useGameEngine() {
       if (p1.camera.z <= 0 && p2.camera.z <= 0) continue;
       if (p2.screen.y >= clipY) continue;
 
-      toDraw.push({ i, sg, p1, p2, alt: Math.floor(i / 3) % 2 === 0 });
+      toDraw.push({ i, sg, p1, p2, alt: Math.floor(i / 3) % 2 === 0, n });
     }
 
     // Draw back to front
     for (let d = toDraw.length - 1; d >= 0; d--) {
-      const { sg, p1, p2, alt } = toDraw[d];
+      const { sg, p1, p2, alt, n } = toDraw[d];
+      const detailed = n < DETAIL_DIST;
 
       // grass
       trapezoid(ctx, p1.screen.x, p1.screen.y, W * 2, p2.screen.x, p2.screen.y, W * 2,
@@ -762,8 +876,8 @@ export function useGameEngine() {
       trapezoid(ctx, p1.screen.x, p1.screen.y, p1.screen.w,
         p2.screen.x, p2.screen.y, p2.screen.w,
         alt ? COL.ROAD_L : COL.ROAD_D);
-      // lane markings
-      if (alt) {
+      // lane markings (only near)
+      if (alt && detailed) {
         const lw1 = p1.screen.w * 0.01, lw2 = p2.screen.w * 0.01;
         for (let ln = 1; ln < LANES; ln++) {
           const lx1 = p1.screen.x - p1.screen.w + (p1.screen.w * 2 * ln) / LANES;
@@ -772,12 +886,12 @@ export function useGameEngine() {
         }
       }
 
-      // Trees
-      if (sg.tree && p1.scale > 0.001) {
+      // Trees (only near)
+      if (detailed && sg.tree && p1.scale > 0.001) {
         const tx = p1.screen.x + sg.treeSide * p1.screen.w * sg.treeOff;
         const ty = p1.screen.y;
         const ts = p1.scale * 1200;
-        if (ty < clipY && ts > 2) {
+        if (ts > 2) {
           ctx.fillStyle = COL.TREE_TRUNK;
           ctx.fillRect(tx - ts * 0.08, ty - ts * 0.6, ts * 0.16, ts * 0.6);
           ctx.fillStyle = COL.TREE_TOP;
@@ -798,8 +912,25 @@ export function useGameEngine() {
         if (p1.scale > 0.001) {
           const ox = p1.screen.x + (coin.x * p1.scale * W) / 2;
           const oy = p1.screen.y;
-          if (oy < clipY) {
-            drawCoin(ctx, ox, oy, p1.scale, s.gameTime);
+          drawCoin(ctx, ox, oy, p1.scale, s.gameTime);
+        }
+      }
+
+      // Traffic cars in this segment
+      const carsHere = trafficByN[n];
+      if (carsHere && p1.scale > 0.001) {
+        const segLoZ = n * SEG_LEN - (s.pos % SEG_LEN);
+        for (const { c, rel } of carsHere) {
+          const t = Math.max(0, Math.min(1, (rel - segLoZ) / SEG_LEN));
+          const sx = p1.screen.x + (p2.screen.x - p1.screen.x) * t;
+          const sy = p1.screen.y + (p2.screen.y - p1.screen.y) * t;
+          const scale = p1.scale + (p2.scale - p1.scale) * t;
+          const ox = sx + (c.x * scale * W) / 2;
+          const cw = scale * 800;
+          const ch = scale * 600;
+          if (cw > 3) {
+            const col = COL.CARS[c.ci];
+            drawCar(ctx, ox, sy, cw, ch, col.b, col.a, '#1a1a3a');
           }
         }
       }
@@ -812,7 +943,7 @@ export function useGameEngine() {
           const oy = p1.screen.y;
           const cw = p1.scale * 800;
           const ch = p1.scale * 600;
-          if (cw > 3 && oy < clipY) {
+          if (cw > 3) {
             if (o.type === OBS_CAR) {
               const c = COL.CARS[o.ci];
               drawCar(ctx, ox, oy, cw, ch, c.b, c.a, '#1a1a3a');
@@ -833,9 +964,19 @@ export function useGameEngine() {
     // Player car
     if (s.state !== 'start') {
       const pw = 70, ph = 90;
+      // Ground shadow when jumping (separate so it stays on the ground)
+      if (s.jumpY < 0) {
+        const heightFrac = Math.min(-s.jumpY / 250, 1);
+        const shScale = 1 - heightFrac * 0.6;
+        ctx.fillStyle = `rgba(0,0,0,${0.45 * (1 - heightFrac * 0.5)})`;
+        ctx.beginPath();
+        ctx.ellipse(W / 2, H - 78, 32 * shScale, 6 * shScale, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.save();
-      ctx.translate(W / 2, H - 90);
-      const tilt = s.steer * -0.05 + (s.oilSlide > 0 ? Math.sin(s.gameTime * 12) * 0.08 : 0);
+      ctx.translate(W / 2, H - 90 + s.jumpY);
+      const tilt = s.steer * -0.05 + (s.oilSlide > 0 ? Math.sin(s.gameTime * 12) * 0.08 : 0)
+        + (s.jumpV < 0 ? -0.08 : s.jumpY < 0 ? 0.08 : 0);
       ctx.rotate(tilt);
       drawCar(ctx, 0, 0, pw, ph, COL.P_BODY, COL.P_ACC, COL.P_WIN);
       ctx.restore();
@@ -877,7 +1018,7 @@ export function useGameEngine() {
     ctx.restore();
 
     s.af = requestAnimationFrame(loopRef.current);
-  }, [endGame]);
+  }, []);
 
   useEffect(() => {
     loopRef.current = loop;
@@ -899,9 +1040,16 @@ export function useGameEngine() {
       if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') s.keys.u = true;
       if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') s.keys.d = true;
       if (e.key === 'm' || e.key === 'M') toggleMute();
-      if (e.key === 'p' || e.key === 'P' || e.key === ' ') {
+      if (e.key === 'p' || e.key === 'P') {
         e.preventDefault();
         togglePause();
+      }
+      if (e.key === ' ') {
+        e.preventDefault();
+        if (s.state === 'playing' && s.jumpY === 0 && s.jumpV === 0) {
+          s.jumpV = -JUMP_V;
+          soundRef.current.playJump();
+        }
       }
     };
     const ku = (e) => {
