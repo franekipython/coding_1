@@ -6,17 +6,19 @@ function App() {
   const [gameState, setGameState] = useState('start');
   const [score, setScore] = useState(0);
   const [bestScore, setBestScore] = useState(
-    parseInt(localStorage.getItem('turboRacerBest') || '0')
+    parseInt(localStorage.getItem('trBest') || '0')
   );
   const [speed, setSpeed] = useState(0);
+  const [coins, setCoins] = useState(0);
 
   const { canvasRef, setup, startGame } = useGameEngine();
 
-  const handleStateChange = useCallback((newState, newScore, newBest, newSpeed) => {
+  const handleStateChange = useCallback((newState, newScore, newBest, newSpeed, newCoins) => {
     setGameState(newState);
     setScore(newScore);
     setBestScore(newBest);
     setSpeed(newSpeed);
+    setCoins(newCoins || 0);
   }, []);
 
   useEffect(() => {
@@ -36,11 +38,7 @@ function App() {
 
   return (
     <div className="game-container" id="game-container">
-      <canvas
-        ref={canvasRef}
-        id="gameCanvas"
-        className="game-canvas"
-      />
+      <canvas ref={canvasRef} id="gameCanvas" className="game-canvas" />
 
       {/* HUD */}
       {gameState === 'playing' && (
@@ -48,6 +46,10 @@ function App() {
           <div className="hud-item" id="hud-score">
             <span className="hud-label">WYNIK</span>
             <span className="hud-value hud-cyan">{score}</span>
+          </div>
+          <div className="hud-item" id="hud-coins">
+            <span className="hud-label">💰 MONETY</span>
+            <span className="hud-value hud-gold">{coins}</span>
           </div>
           <div className="hud-item" id="hud-speed">
             <span className="hud-label">KM/H</span>
@@ -69,19 +71,19 @@ function App() {
             </h1>
             <div className="car-emoji">🏎️</div>
             <p className="instructions">
-              Użyj <kbd>←</kbd> <kbd>→</kbd> do sterowania
-            </p>
-            <p className="instructions">
+              <kbd>←</kbd> <kbd>→</kbd> sterowanie &nbsp;
               <kbd>↑</kbd> gaz &nbsp; <kbd>↓</kbd> hamulec
             </p>
             <p className="instructions mobile-hint">
               Na telefonie: dotknij lewą/prawą stronę ekranu
             </p>
-            <button
-              id="start-btn"
-              className="btn-glow"
-              onClick={handleStart}
-            >
+            <div className="legend">
+              <p>🚗 Samochody & 🛢️ Beczki = koniec gry</p>
+              <p>🔶 Pachołki = spowolnienie</p>
+              <p>🛢️ Plamy oleju = poślizg</p>
+              <p>💰 Monety = +50 punktów</p>
+            </div>
+            <button id="start-btn" className="btn-glow" onClick={handleStart}>
               START
             </button>
           </div>
@@ -100,15 +102,15 @@ function App() {
                 <span className="stat-value" id="final-score">{score}</span>
               </div>
               <div className="stat">
+                <span className="stat-label">Monety</span>
+                <span className="stat-value hud-gold" id="final-coins">💰 {coins}</span>
+              </div>
+              <div className="stat">
                 <span className="stat-label">Najlepszy</span>
                 <span className="stat-value" id="final-best">{bestScore}</span>
               </div>
             </div>
-            <button
-              id="restart-btn"
-              className="btn-glow"
-              onClick={handleRestart}
-            >
+            <button id="restart-btn" className="btn-glow" onClick={handleRestart}>
               ZAGRAJ PONOWNIE
             </button>
           </div>
