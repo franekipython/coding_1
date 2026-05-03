@@ -10,15 +10,19 @@ function App() {
   );
   const [speed, setSpeed] = useState(0);
   const [coins, setCoins] = useState(0);
+  const [level, setLevel] = useState(1);
+  const [muted, setMuted] = useState(false);
 
-  const { canvasRef, setup, startGame } = useGameEngine();
+  const { canvasRef, setup, startGame, toggleMute, togglePause } = useGameEngine();
 
-  const handleStateChange = useCallback((newState, newScore, newBest, newSpeed, newCoins) => {
+  const handleStateChange = useCallback((newState, newScore, newBest, newSpeed, newCoins, newLevel, newMuted) => {
     setGameState(newState);
     setScore(newScore);
     setBestScore(newBest);
     setSpeed(newSpeed);
     setCoins(newCoins || 0);
+    if (newLevel !== undefined) setLevel(newLevel);
+    if (newMuted !== undefined) setMuted(newMuted);
   }, []);
 
   useEffect(() => {
@@ -41,7 +45,7 @@ function App() {
       <canvas ref={canvasRef} id="gameCanvas" className="game-canvas" />
 
       {/* HUD */}
-      {gameState === 'playing' && (
+      {(gameState === 'playing' || gameState === 'paused') && (
         <div className="hud" id="hud">
           <div className="hud-item" id="hud-score">
             <span className="hud-label">WYNIK</span>
@@ -55,9 +59,44 @@ function App() {
             <span className="hud-label">KM/H</span>
             <span className="hud-value hud-yellow">{speed}</span>
           </div>
+          <div className="hud-item" id="hud-level">
+            <span className="hud-label">POZIOM</span>
+            <span className="hud-value hud-yellow">{level}</span>
+          </div>
           <div className="hud-item" id="hud-best">
             <span className="hud-label">REKORD</span>
             <span className="hud-value hud-magenta">{bestScore}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Top-right controls */}
+      <div className="top-controls">
+        <button
+          className="icon-btn"
+          onClick={toggleMute}
+          title={muted ? 'Włącz dźwięk (M)' : 'Wycisz (M)'}
+        >
+          {muted ? '🔇' : '🔊'}
+        </button>
+        {(gameState === 'playing' || gameState === 'paused') && (
+          <button
+            className="icon-btn"
+            onClick={togglePause}
+            title={gameState === 'paused' ? 'Wznów (P)' : 'Pauza (P)'}
+          >
+            {gameState === 'paused' ? '▶' : '⏸'}
+          </button>
+        )}
+      </div>
+
+      {/* Pause overlay */}
+      {gameState === 'paused' && (
+        <div className="overlay" id="pause-screen">
+          <div className="overlay-content">
+            <h2 className="gameover-title" style={{ color: 'var(--accent-cyan)', textShadow: 'var(--glow-cyan)' }}>PAUZA</h2>
+            <p className="instructions">Naciśnij <kbd>P</kbd> lub <kbd>SPACJA</kbd> aby wznowić</p>
+            <button className="btn-glow" onClick={togglePause}>WZNÓW</button>
           </div>
         </div>
       )}
@@ -73,6 +112,9 @@ function App() {
             <p className="instructions">
               <kbd>←</kbd> <kbd>→</kbd> sterowanie &nbsp;
               <kbd>↑</kbd> gaz &nbsp; <kbd>↓</kbd> hamulec
+            </p>
+            <p className="instructions">
+              <kbd>P</kbd> pauza &nbsp; <kbd>M</kbd> wycisz
             </p>
             <p className="instructions mobile-hint">
               Na telefonie: dotknij lewą/prawą stronę ekranu

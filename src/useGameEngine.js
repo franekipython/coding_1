@@ -1,4 +1,5 @@
-import { useRef, useCallback } from 'react';
+/* eslint-disable react-hooks/immutability -- game state lives in a useRef and mutates every frame by design */
+import { useRef, useCallback, useEffect } from 'react';
 
 // ===== CONSTANTS =====
 const ROAD_W = 2000;
@@ -48,6 +49,15 @@ class SoundEngine {
     this.engineOsc = null;
     this.engineGain = null;
     this.started = false;
+    this.muted = false;
+  }
+
+  setMuted(m) {
+    this.muted = m;
+    if (this.started && m) {
+      this.engineGain.gain.value = 0;
+      this.windGain.gain.value = 0;
+    }
   }
 
   init() {
@@ -90,14 +100,14 @@ class SoundEngine {
   }
 
   updateEngine(speedPct) {
-    if (!this.started) return;
+    if (!this.started || this.muted) return;
     this.engineOsc.frequency.value = 60 + speedPct * 200;
     this.engineGain.gain.value = Math.min(speedPct * 0.12, 0.08);
     this.windGain.gain.value = Math.max(0, (speedPct - 0.3) * 0.15);
   }
 
   playCoin() {
-    if (!this.ctx) return;
+    if (!this.ctx || this.muted) return;
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     osc.type = 'sine';
@@ -111,7 +121,7 @@ class SoundEngine {
   }
 
   playCrash() {
-    if (!this.ctx) return;
+    if (!this.ctx || this.muted) return;
     const bufSize = this.ctx.sampleRate * 0.4;
     const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
     const data = buf.getChannelData(0);
@@ -124,7 +134,7 @@ class SoundEngine {
   }
 
   playBarrel() {
-    if (!this.ctx) return;
+    if (!this.ctx || this.muted) return;
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     osc.type = 'square';
@@ -138,7 +148,7 @@ class SoundEngine {
   }
 
   playOil() {
-    if (!this.ctx) return;
+    if (!this.ctx || this.muted) return;
     const bufSize = this.ctx.sampleRate * 0.6;
     const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
     const data = buf.getChannelData(0);
@@ -328,8 +338,10 @@ function spawnObstacles(segs) {
   for (const s of segs) { s.obstacles = []; s.coins = []; }
   let cooldown = 0;
   for (let i = 40; i < segs.length - 10; i++) {
+    const progress = i / segs.length;
+    const obsRate = 0.025 + progress * 0.05;
     if (cooldown > 0) { cooldown--; continue; }
-    if (Math.random() < 0.035) {
+    if (Math.random() < obsRate) {
       const lane = Math.floor(Math.random() * LANES);
       const lw = ROAD_W / LANES;
       const x = -ROAD_W / 2 + lw * lane + lw / 2;
@@ -352,7 +364,8 @@ function spawnObstacles(segs) {
         const ci2 = Math.floor(Math.random() * COL.CARS.length);
         segs[i].obstacles.push({ x: x2, ci: ci2, type: OBS_CAR, passed: false });
       }
-      cooldown = 8 + Math.floor(Math.random() * 12);
+      const progressC = i / segs.length;
+      cooldown = Math.max(3, Math.floor((8 + Math.random() * 12) * (1 - progressC * 0.55)));
     }
   }
 
@@ -387,15 +400,18 @@ function project3d(p, camX, camY, camZ, W, H) {
 }
 
 // ===== HOOK =====
+const BASE_MAX_SPD = SEG_LEN * 1.2;
+
 export function useGameEngine() {
   const canvasRef = useRef(null);
   const soundRef = useRef(new SoundEngine());
+  const loopRef = useRef(null);
   const S = useRef({
     state: 'start',
     score: 0, coins: 0,
     best: parseInt(localStorage.getItem('trBest') || '0'),
     speed: 0,
-    maxSpd: SEG_LEN * 1.2,
+    maxSpd: BASE_MAX_SPD,
     accel: SEG_LEN * 0.006,
     decel: SEG_LEN * 0.003,
     brake: SEG_LEN * 0.01,
@@ -405,9 +421,11 @@ export function useGameEngine() {
     keys: { l: false, r: false, u: false, d: false },
     particles: [],
     smokeTimer: 0,
-    oilSlide: 0, // countdown for oil slide effect
+    oilSlide: 0,
     shakeX: 0, shakeY: 0, shakeDur: 0,
     af: null, lt: 0, gameTime: 0,
+    level: 1, diffMul: 1,
+    muted: false,
     cb: null,
   });
 
@@ -418,6 +436,31 @@ export function useGameEngine() {
     spawnObstacles(s.segs);
   }, []);
 
+  const notifyState = useCallback(() => {
+    const s = S.current;
+    if (!s.cb) return;
+    const sp = s.maxSpd > 0 ? s.speed / s.maxSpd : 0;
+    s.cb(s.state, s.score, s.best, Math.floor(sp * 280), s.coins, s.level, s.muted);
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    const s = S.current;
+    s.muted = !s.muted;
+    soundRef.current.setMuted(s.muted);
+    notifyState();
+    return s.muted;
+  }, [notifyState]);
+
+  const togglePause = useCallback(() => {
+    const s = S.current;
+    if (s.state === 'playing') s.state = 'paused';
+    else if (s.state === 'paused') {
+      s.state = 'playing';
+      s.lt = performance.now();
+    } else return;
+    notifyState();
+  }, [notifyState]);
+
   const startGame = useCallback(() => {
     const s = S.current;
     soundRef.current.init();
@@ -425,8 +468,9 @@ export function useGameEngine() {
     s.score = 0; s.coins = 0;
     s.speed = 0; s.px = 0; s.pos = 0;
     s.particles = []; s.shakeDur = 0; s.oilSlide = 0; s.gameTime = 0;
+    s.level = 1; s.diffMul = 1; s.maxSpd = BASE_MAX_SPD;
     initRoad();
-    if (s.cb) s.cb('playing', 0, s.best, 0, 0);
+    if (s.cb) s.cb('playing', 0, s.best, 0, 0, 1, s.muted);
   }, [initRoad]);
 
   const endGame = useCallback(() => {
@@ -454,7 +498,7 @@ export function useGameEngine() {
         type: 'explosion',
       });
     }
-    if (s.cb) s.cb('gameover', s.score, s.best, 0, s.coins);
+    if (s.cb) s.cb('gameover', s.score, s.best, 0, s.coins, s.level, s.muted);
   }, []);
 
   // ===== GAME LOOP =====
@@ -465,12 +509,17 @@ export function useGameEngine() {
     const ctx = canvas.getContext('2d');
     const dt = Math.min((ts - s.lt) / 1000, 0.05);
     s.lt = ts;
-    s.gameTime += dt;
     const W = canvas.width;
     const H = canvas.height;
 
     // ---- UPDATE ----
     if (s.state === 'playing') {
+      s.gameTime += dt;
+      s.diffMul = 1 + Math.min(s.gameTime / 60, 1);
+      s.maxSpd = BASE_MAX_SPD * s.diffMul;
+      const newLevel = Math.floor(s.gameTime / 10) + 1;
+      if (newLevel !== s.level) s.level = newLevel;
+
       if (s.keys.u) s.speed = Math.min(s.speed + s.accel * dt * 60, s.maxSpd);
       else if (s.keys.d) s.speed = Math.max(s.speed - s.brake * dt * 60, 0);
       else s.speed = Math.max(s.speed - s.decel * dt * 60, 0);
@@ -613,7 +662,13 @@ export function useGameEngine() {
         }
       }
 
-      if (s.cb) s.cb('playing', s.score, s.best, Math.floor(sp * 280), s.coins);
+      if (s.cb) s.cb('playing', s.score, s.best, Math.floor(sp * 280), s.coins, s.level, s.muted);
+    } else if (s.state === 'paused') {
+      soundRef.current.updateEngine(0);
+      if (soundRef.current.started) {
+        soundRef.current.engineGain.gain.value = 0;
+        soundRef.current.windGain.gain.value = 0;
+      }
     }
 
     // Update particles
@@ -821,8 +876,12 @@ export function useGameEngine() {
     ctx.globalAlpha = 1;
     ctx.restore();
 
-    s.af = requestAnimationFrame(loop);
+    s.af = requestAnimationFrame(loopRef.current);
   }, [endGame]);
+
+  useEffect(() => {
+    loopRef.current = loop;
+  }, [loop]);
 
   // ===== SETUP =====
   const setup = useCallback((cb) => {
@@ -839,6 +898,11 @@ export function useGameEngine() {
       if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') s.keys.r = true;
       if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') s.keys.u = true;
       if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') s.keys.d = true;
+      if (e.key === 'm' || e.key === 'M') toggleMute();
+      if (e.key === 'p' || e.key === 'P' || e.key === ' ') {
+        e.preventDefault();
+        togglePause();
+      }
     };
     const ku = (e) => {
       if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') s.keys.l = false;
@@ -866,16 +930,16 @@ export function useGameEngine() {
 
     initRoad();
     s.lt = performance.now();
-    s.af = requestAnimationFrame(loop);
+    s.af = requestAnimationFrame(loopRef.current);
 
     return () => {
       cancelAnimationFrame(s.af);
       window.removeEventListener('keydown', kd);
       window.removeEventListener('keyup', ku);
     };
-  }, [loop, initRoad]);
+  }, [initRoad, toggleMute, togglePause]);
 
-  return { canvasRef, setup, startGame, stateRef: S };
+  return { canvasRef, setup, startGame, toggleMute, togglePause, stateRef: S };
 }
 
 export default useGameEngine;
