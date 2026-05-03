@@ -124,9 +124,12 @@ function buildRoad() {
     for (const [a, b, c] of zones) if (i > a && i < b) curve = c;
     // hills
     const hills = [
-      [100, 200, 30], [400, 550, -20], [700, 850, 40], [1000, 1200, -30],
-      [1300, 1500, 50], [1600, 1800, -40], [2000, 2300, 25], [2500, 2700, -35],
-      [3000, 3300, 45], [3500, 3800, -25], [4000, 4400, 35],
+      [80, 180, 80], [250, 350, -60], [400, 550, -50], [600, 700, 100],
+      [700, 850, 90], [1000, 1200, -80], [1300, 1500, 120], [1600, 1800, -100],
+      [1900, 2000, 70], [2000, 2300, 60], [2500, 2700, -90], [2800, 2900, 110],
+      [3000, 3300, 100], [3400, 3500, -70], [3500, 3800, -60], [3900, 4000, 130],
+      [4000, 4400, 80], [4500, 4600, -110], [4700, 4900, 90],
+      [5000, 5200, -80], [5300, 5500, 100], [5600, 5800, -120],
     ];
     for (const [a, b, h] of hills) if (i > a && i < b) hill = h;
 
@@ -154,13 +157,23 @@ function buildRoad() {
 
 function spawnObstacles(segs) {
   for (const s of segs) s.obstacles = [];
+  let cooldown = 0;
   for (let i = 40; i < segs.length - 10; i++) {
-    if (Math.random() < 0.015) {
+    if (cooldown > 0) { cooldown--; continue; }
+    if (Math.random() < 0.035) {
       const lane = Math.floor(Math.random() * LANES);
       const lw = ROAD_W / LANES;
       const x = -ROAD_W / 2 + lw * lane + lw / 2;
       const ci = Math.floor(Math.random() * COL.CARS.length);
       segs[i].obstacles.push({ x, ci, passed: false });
+      // sometimes spawn a second car in adjacent lane
+      if (Math.random() < 0.3) {
+        const lane2 = (lane + (Math.random() < 0.5 ? 1 : -1) + LANES) % LANES;
+        const x2 = -ROAD_W / 2 + lw * lane2 + lw / 2;
+        const ci2 = Math.floor(Math.random() * COL.CARS.length);
+        segs[i].obstacles.push({ x: x2, ci: ci2, passed: false });
+      }
+      cooldown = 8 + Math.floor(Math.random() * 12); // min gap between groups
     }
   }
 }
