@@ -22,7 +22,7 @@ const COL = {
   GRASS_L: '#1a3a1a', GRASS_D: '#153015',
   RUMBLE_L: '#ff2244', RUMBLE_D: '#ffffff',
   LANE_M: 'rgba(255,255,255,0.35)',
-  TREE_TRUNK: '#3d2b1f', TREE_TOP: '#1a8a3a',
+  TREE_TRUNK: '#6b4030', TREE_TOP: '#3dd854',
   P_BODY: '#00ccff', P_ACC: '#ff00aa', P_WIN: '#0a0a3a',
   CARS: [
     { b: '#ff3355', a: '#ff8800' },
@@ -37,7 +37,7 @@ const COL = {
   BARREL_BAND: '#444444',
   CONE: '#ff6600',
   CONE_STRIPE: '#ffffff',
-  OIL: 'rgba(20,10,40,0.6)',
+  OIL: 'rgba(0,0,0,0.85)',
 };
 
 // obstacle types
@@ -268,18 +268,20 @@ function drawCone(ctx, cx, cy, w, h) {
 }
 
 function drawOilSlick(ctx, cx, cy, w, h) {
+  // dark base — high contrast against road
   ctx.fillStyle = COL.OIL;
   ctx.beginPath();
-  ctx.ellipse(cx, cy - h * 0.1, w * 0.5, h * 0.15, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy - h * 0.08, w * 0.6, h * 0.2, 0, 0, Math.PI * 2);
   ctx.fill();
-  // rainbow sheen
-  const grad = ctx.createRadialGradient(cx - w * 0.1, cy - h * 0.15, 0, cx, cy - h * 0.1, w * 0.4);
-  grad.addColorStop(0, 'rgba(100,50,200,0.15)');
-  grad.addColorStop(0.5, 'rgba(50,200,100,0.1)');
-  grad.addColorStop(1, 'rgba(200,100,50,0.05)');
+  // rainbow sheen — bright and obvious
+  const grad = ctx.createRadialGradient(cx - w * 0.15, cy - h * 0.15, 0, cx, cy - h * 0.08, w * 0.55);
+  grad.addColorStop(0, 'rgba(180,80,255,0.7)');
+  grad.addColorStop(0.4, 'rgba(80,255,180,0.5)');
+  grad.addColorStop(0.7, 'rgba(255,180,80,0.4)');
+  grad.addColorStop(1, 'rgba(20,10,40,0.2)');
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.ellipse(cx, cy - h * 0.1, w * 0.45, h * 0.13, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy - h * 0.08, w * 0.55, h * 0.18, 0, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -412,13 +414,13 @@ function spawnObstacles(segs) {
 
 function spawnTraffic(tLen) {
   const traffic = [];
-  const startGap = 4000; // empty zone in front of player at start
+  const startGap = 1500; // small empty zone in front of player at start
   for (let i = 0; i < NUM_TRAFFIC; i++) {
     const lane = Math.floor(Math.random() * LANES);
     const lw = ROAD_W / LANES;
     const x = -ROAD_W / 2 + lw * lane + lw / 2;
-    const z = startGap + (i / NUM_TRAFFIC) * (tLen - startGap - 1000) + Math.random() * 300;
-    const speed = SEG_LEN * (0.45 + Math.random() * 0.45);
+    const z = startGap + (i / NUM_TRAFFIC) * (tLen - startGap - 1000) + Math.random() * 200;
+    const speed = SEG_LEN * (0.35 + Math.random() * 0.4);
     const ci = Math.floor(Math.random() * COL.CARS.length);
     traffic.push({ x, z, speed, ci });
   }
@@ -890,8 +892,8 @@ export function useGameEngine() {
       if (detailed && sg.tree && p1.scale > 0.001) {
         const tx = p1.screen.x + sg.treeSide * p1.screen.w * sg.treeOff;
         const ty = p1.screen.y;
-        const ts = p1.scale * 1200;
-        if (ts > 2) {
+        const ts = p1.scale * 1500;
+        if (ts > 0.5) {
           ctx.fillStyle = COL.TREE_TRUNK;
           ctx.fillRect(tx - ts * 0.08, ty - ts * 0.6, ts * 0.16, ts * 0.6);
           ctx.fillStyle = COL.TREE_TOP;
@@ -928,7 +930,7 @@ export function useGameEngine() {
           const ox = sx + (c.x * scale * W) / 2;
           const cw = scale * 800;
           const ch = scale * 600;
-          if (cw > 3) {
+          if (cw > 0.5) {
             const col = COL.CARS[c.ci];
             drawCar(ctx, ox, sy, cw, ch, col.b, col.a, '#1a1a3a');
           }
@@ -943,7 +945,7 @@ export function useGameEngine() {
           const oy = p1.screen.y;
           const cw = p1.scale * 800;
           const ch = p1.scale * 600;
-          if (cw > 3) {
+          if (cw > 0.5) {
             if (o.type === OBS_CAR) {
               const c = COL.CARS[o.ci];
               drawCar(ctx, ox, oy, cw, ch, c.b, c.a, '#1a1a3a');
